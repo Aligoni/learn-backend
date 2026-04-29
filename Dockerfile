@@ -21,8 +21,15 @@ COPY package.json yarn.lock ./
 RUN yarn install --frozen-lockfile
 
 COPY . .
-RUN yarn build \
-  && yarn install --frozen-lockfile --production
+RUN yarn build
+
+# Clean production install so sqlite3 / bcrypt native bindings match this image (libc, arch).
+# TypeORM reports "install sqlite3" if require('sqlite3') fails for any reason.
+ENV NODE_ENV=production
+RUN rm -rf node_modules \
+  && yarn install --frozen-lockfile --production \
+  && npm rebuild sqlite3 bcrypt --build-from-source \
+  && node -e "require('sqlite3'); console.log('sqlite3: ok')"
 
 FROM node:22-bookworm-slim AS runner
 
