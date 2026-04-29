@@ -4,6 +4,9 @@ import { TypeOrmModule } from '@nestjs/typeorm';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
 import { AuthModule } from './auth/auth.module';
+import { Category } from './products/entities/category.entity';
+import { Product } from './products/entities/product.entity';
+import { ProductsModule } from './products/products.module';
 import { User } from './users/entities/user.entity';
 import { UsersModule } from './users/users.module';
 
@@ -30,7 +33,7 @@ import { UsersModule } from './users/users.module';
         return {
           type: 'sqlite',
           database,
-          entities: [User],
+          entities: [User, Product, Category],
           synchronize,
           logging: nodeEnv === 'development',
         };
@@ -38,6 +41,7 @@ import { UsersModule } from './users/users.module';
     }),
     UsersModule,
     AuthModule,
+    ProductsModule,
   ],
 })
 export class AppModule {}
