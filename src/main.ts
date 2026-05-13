@@ -9,6 +9,7 @@ async function bootstrap() {
   app.enableCors({
     origin: true,
     credentials: true,
+    exposedHeaders: ['X-Cart-Session'],
   });
 
   app.useGlobalPipes(
@@ -37,6 +38,18 @@ async function bootstrap() {
       },
       'access-token',
     )
+    .addApiKey(
+      {
+        type: 'apiKey',
+        name: 'X-Cart-Session',
+        in: 'header',
+        description:
+          'Guest cart session id. Returned by the first cart write in the response body ' +
+          '(`sessionId`) and the `X-Cart-Session` response header. Ignored when a Bearer token is also present.',
+      },
+      'cart-session',
+    )
+    .addTag('cart', 'Shopping cart for guests and authenticated users.')
     .build();
 
   const document = SwaggerModule.createDocument(app, swaggerConfig);

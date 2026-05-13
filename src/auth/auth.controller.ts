@@ -1,7 +1,15 @@
-import { Body, Controller, Get, Post, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Get,
+  Headers,
+  Post,
+  UseGuards,
+} from '@nestjs/common';
 import {
   ApiBearerAuth,
   ApiBody,
+  ApiHeader,
   ApiOperation,
   ApiResponse,
   ApiTags,
@@ -24,9 +32,16 @@ export class AuthController {
     summary: 'Register a new account',
     description:
       'Creates a user with a hashed password and returns a JWT plus public profile. ' +
-      'Email must be unique.',
+      'Email must be unique. If `X-Cart-Session` is provided, the matching guest cart is ' +
+      'merged into the new account on success (quantities summed, capped at stock).',
   })
   @ApiBody({ type: SignUpDto })
+  @ApiHeader({
+    name: 'X-Cart-Session',
+    required: false,
+    description:
+      'Optional guest cart session id. If present, that cart is merged into the new account.',
+  })
   @ApiResponse({
     status: 201,
     description: 'Account created; returns token and user.',
@@ -40,17 +55,28 @@ export class AuthController {
     status: 409,
     description: 'Email is already registered.',
   })
-  signUp(@Body() dto: SignUpDto): Promise<AuthResponseDto> {
-    return this.authService.signUp(dto);
+  signUp(
+    @Body() dto: SignUpDto,
+    @Headers('x-cart-session') guestCartSessionId?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.signUp(dto, guestCartSessionId);
   }
 
   @Post('log-in')
   @ApiOperation({
     summary: 'Sign in with email and password',
     description:
-      'Validates credentials and returns a JWT and public profile. Use the token on protected routes.',
+      'Validates credentials and returns a JWT and public profile. Use the token on protected routes. ' +
+      'If `X-Cart-Session` is provided, the matching guest cart is merged into the user account on success ' +
+      '(quantities summed with the existing user cart, capped at stock).',
   })
   @ApiBody({ type: LogInDto })
+  @ApiHeader({
+    name: 'X-Cart-Session',
+    required: false,
+    description:
+      'Optional guest cart session id. If present, that cart is merged into the user account.',
+  })
   @ApiResponse({
     status: 200,
     description: 'Authenticated; returns token and user.',
@@ -64,8 +90,11 @@ export class AuthController {
     status: 401,
     description: 'Wrong email or password.',
   })
-  logIn(@Body() dto: LogInDto): Promise<AuthResponseDto> {
-    return this.authService.logIn(dto);
+  logIn(
+    @Body() dto: LogInDto,
+    @Headers('x-cart-session') guestCartSessionId?: string,
+  ): Promise<AuthResponseDto> {
+    return this.authService.logIn(dto, guestCartSessionId);
   }
 
   @Get('me')
