@@ -12,6 +12,7 @@ import { UpdateCategoryDto } from './dto/update-category.dto';
 import { UpdateProductDto } from './dto/update-product.dto';
 import { Category } from './entities/category.entity';
 import { Product } from './entities/product.entity';
+import { StockService } from './stock.service';
 import { CategoryDto } from './dto/category.dto';
 import {
   ListProductsQueryDto,
@@ -36,6 +37,7 @@ export class ProductsService {
     private readonly productsRepo: Repository<Product>,
     @InjectRepository(Category)
     private readonly categoriesRepo: Repository<Category>,
+    private readonly stockService: StockService,
   ) {}
 
   toCategoryDto(category: Category): CategoryDto {
@@ -260,7 +262,10 @@ export class ProductsService {
     return this.toProductDto(product);
   }
 
-  async createProduct(dto: CreateProductDto): Promise<ProductDto> {
+  async createProduct(
+    dto: CreateProductDto,
+    actorUserId: string,
+  ): Promise<ProductDto> {
     const category = await this.categoriesRepo.findOne({
       where: { id: dto.categoryId },
     });
@@ -277,11 +282,21 @@ export class ProductsService {
       imageUrl: dto.imageUrl?.trim() || this.defaultImageUrl(slug),
       price: dto.price,
       currency: dto.currency?.trim().toUpperCase() || 'USD',
-      stock: dto.stock,
+      stock: 0,
       rating: dto.rating ?? 0,
       categoryId: category.id,
     });
     const saved = await this.productsRepo.save(entity);
+
+    if (dto.stock > 0) {
+      await this.stockService.applyMovement({
+        productId: saved.id,
+        delta: dto.stock,
+        reason: 'initial',
+        actorUserId,
+        note: 'Initial inventory on product creation.',
+      });
+    }
     return this.getByIdForAdmin(saved.id);
   }
 

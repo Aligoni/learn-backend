@@ -9,6 +9,7 @@ import { CartItem } from './cart/entities/cart-item.entity';
 import { Cart } from './cart/entities/cart.entity';
 import { Category } from './products/entities/category.entity';
 import { Product } from './products/entities/product.entity';
+import { StockMovement } from './products/entities/stock-movement.entity';
 import { ProductsModule } from './products/products.module';
 import { User } from './users/entities/user.entity';
 import { UsersModule } from './users/users.module';
@@ -36,7 +37,7 @@ import { UsersModule } from './users/users.module';
         return {
           type: 'sqlite',
           database,
-          entities: [User, Product, Category, Cart, CartItem],
+          entities: [User, Product, Category, Cart, CartItem, StockMovement],
           synchronize,
           logging: nodeEnv === 'development',
         };
