@@ -1,12 +1,12 @@
 import { ApiProperty } from '@nestjs/swagger';
 import { IsEmail, IsString, MaxLength, MinLength } from 'class-validator';
 
-export class SignUpDto {
+export class CreateAdminUserDto {
   @ApiProperty({
     minLength: 1,
     maxLength: 80,
-    example: 'Ada Lovelace',
-    description: 'Display name for the account.',
+    example: 'Grace Hopper',
+    description: 'Display name for the new admin.',
   })
   @IsString()
   @MinLength(1)
@@ -15,9 +15,8 @@ export class SignUpDto {
 
   @ApiProperty({
     format: 'email',
-    example: 'student@example.com',
-    description:
-      'Must be unique; stored normalized (trimmed and lower-cased). Used as your username.',
+    example: 'grace@example.com',
+    description: 'Unique email for the new admin (trimmed and lower-cased).',
   })
   @IsEmail()
   email: string;
@@ -26,8 +25,7 @@ export class SignUpDto {
     minLength: 8,
     maxLength: 128,
     example: 'Str0ngP@ssw0rd',
-    description:
-      'Plain text on the wire; the server never stores it, only a password hash.',
+    description: 'Initial password for the new admin.',
   })
   @IsString()
   @MinLength(8, { message: 'Password must be at least 8 characters long.' })

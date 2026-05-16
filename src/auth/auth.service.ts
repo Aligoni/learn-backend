@@ -7,6 +7,7 @@ import {
 import { JwtService } from '@nestjs/jwt';
 import { CartService } from '../cart/cart.service';
 import { UsersService } from '../users/users.service';
+import type { User, UserRole } from '../users/entities/user.entity';
 import { LogInDto } from './dto/log-in.dto';
 import { SignUpDto } from './dto/sign-up.dto';
 import { AuthResponseDto } from './dto/auth-response.dto';
@@ -14,6 +15,7 @@ import { AuthResponseDto } from './dto/auth-response.dto';
 export interface JwtPayload {
   sub: string;
   email: string;
+  role: UserRole;
 }
 
 @Injectable()
@@ -36,8 +38,12 @@ export class AuthService {
         'An account with this email already exists. Try logging in instead.',
       );
     }
-    const user = await this.usersService.create(dto.email, dto.password);
-    const accessToken = await this.signAccessToken(user.id, user.email);
+    const user = await this.usersService.create({
+      name: dto.name,
+      email: dto.email,
+      password: dto.password,
+    });
+    const accessToken = await this.signAccessToken(user);
     await this.tryMergeGuestCart(guestCartSessionId, user.id);
     return {
       accessToken,
@@ -57,7 +63,7 @@ export class AuthService {
     if (!ok) {
       throw new UnauthorizedException('Invalid email or password.');
     }
-    const accessToken = await this.signAccessToken(user.id, user.email);
+    const accessToken = await this.signAccessToken(user);
     await this.tryMergeGuestCart(guestCartSessionId, user.id);
     return {
       accessToken,
@@ -81,11 +87,12 @@ export class AuthService {
     }
   }
 
-  private async signAccessToken(
-    userId: string,
-    email: string,
-  ): Promise<string> {
-    const payload: JwtPayload = { sub: userId, email };
+  private async signAccessToken(user: User): Promise<string> {
+    const payload: JwtPayload = {
+      sub: user.id,
+      email: user.email,
+      role: user.role,
+    };
     return this.jwtService.signAsync(payload);
   }
 }

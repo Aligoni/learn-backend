@@ -1,4 +1,5 @@
 import { ApiProperty } from '@nestjs/swagger';
+import type { UserRole } from '../entities/user.entity';
 
 export class UserPublicDto {
   @ApiProperty({
@@ -9,11 +10,25 @@ export class UserPublicDto {
   id: string;
 
   @ApiProperty({
+    example: 'Ada Lovelace',
+    description: 'Display name supplied at sign-up.',
+  })
+  name: string;
+
+  @ApiProperty({
     format: 'email',
     example: 'student@example.com',
     description: 'Email address used at sign-up (unique).',
   })
   email: string;
+
+  @ApiProperty({
+    enum: ['user', 'admin'],
+    example: 'user',
+    description:
+      'Authorization role. `admin` accounts can access endpoints under `/admin/*`.',
+  })
+  role: UserRole;
 
   @ApiProperty({
     type: String,
