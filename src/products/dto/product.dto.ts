@@ -1,4 +1,4 @@
-import { ApiProperty } from '@nestjs/swagger';
+import { ApiProperty, ApiPropertyOptional } from '@nestjs/swagger';
 import { CategoryDto } from './category.dto';
 
 export class ProductDto {
@@ -78,4 +78,14 @@ export class ProductDto {
     description: 'When the product was last updated.',
   })
   updatedAt: Date;
+
+  @ApiPropertyOptional({
+    type: String,
+    format: 'date-time',
+    nullable: true,
+    example: null,
+    description:
+      'When the product was soft-deleted, or `null` if active. Only ever non-null on admin responses.',
+  })
+  deletedAt: Date | null;
 }

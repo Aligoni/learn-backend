@@ -289,6 +289,7 @@ export class CartService {
         },
         createdAt: item.product.createdAt,
         updatedAt: item.product.updatedAt,
+        deletedAt: item.product.deletedAt,
       },
     };
   }

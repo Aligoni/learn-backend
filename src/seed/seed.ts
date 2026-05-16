@@ -2,15 +2,9 @@ import { Logger } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { DataSource } from 'typeorm';
 import { AppModule } from '../app.module';
+import { slugify } from '../common/slugify';
 import { Category } from '../products/entities/category.entity';
 import { Product } from '../products/entities/product.entity';
-
-function slugify(input: string): string {
-  return input
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '');
-}
 
 function picsumImageUrl(slug: string): string {
   return `https://picsum.photos/seed/${encodeURIComponent(slug)}/600/400`;
