@@ -17,6 +17,8 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Audit } from '../admin/audit.decorator';
+import { AuditService } from '../admin/audit.service';
 import { CurrentUser } from '../auth/current-user.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
@@ -43,6 +45,7 @@ export class AdminProductsController {
   constructor(
     private readonly productsService: ProductsService,
     private readonly stockService: StockService,
+    private readonly auditService: AuditService,
   ) {}
 
   @Get()
@@ -71,6 +74,7 @@ export class AdminProductsController {
   }
 
   @Post()
+  @Audit({ entityType: 'product', action: 'create' })
   @ApiOperation({
     summary: 'Create a product',
     description:
@@ -90,6 +94,7 @@ export class AdminProductsController {
   }
 
   @Patch(':id')
+  @Audit({ entityType: 'product', action: 'update' })
   @ApiOperation({
     summary: 'Update a product',
     description:
@@ -110,6 +115,7 @@ export class AdminProductsController {
   }
 
   @Delete(':id')
+  @Audit({ entityType: 'product', action: 'delete' })
   @ApiOperation({
     summary: 'Soft-delete a product',
     description:
@@ -157,10 +163,15 @@ export class AdminProductsController {
       note: dto.note,
     });
     const product = await this.productsService.getByIdForAdmin(id);
-    return {
-      product,
-      movement: this.stockService.toMovementDto(movement),
-    };
+    const movementDto = this.stockService.toMovementDto(movement);
+    await this.auditService.record({
+      actorUserId: user.id,
+      action: 'create',
+      entityType: 'stock_movement',
+      entityId: movement.id,
+      after: movementDto as unknown as Record<string, unknown>,
+    });
+    return { product, movement: movementDto };
   }
 
   @Get(':id/stock/movements')

@@ -3,6 +3,8 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { TypeOrmModule } from '@nestjs/typeorm';
 import { existsSync, mkdirSync } from 'fs';
 import { dirname } from 'path';
+import { AdminModule } from './admin/admin.module';
+import { AuditLog } from './admin/entities/audit-log.entity';
 import { AuthModule } from './auth/auth.module';
 import { CartModule } from './cart/cart.module';
 import { CartItem } from './cart/entities/cart-item.entity';
@@ -37,12 +39,21 @@ import { UsersModule } from './users/users.module';
         return {
           type: 'sqlite',
           database,
-          entities: [User, Product, Category, Cart, CartItem, StockMovement],
+          entities: [
+            User,
+            Product,
+            Category,
+            Cart,
+            CartItem,
+            StockMovement,
+            AuditLog,
+          ],
           synchronize,
           logging: nodeEnv === 'development',
         };
       },
     }),
+    AdminModule,
     UsersModule,
     AuthModule,
     ProductsModule,

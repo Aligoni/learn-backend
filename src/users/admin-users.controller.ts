@@ -17,6 +17,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Audit } from '../admin/audit.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -35,6 +36,7 @@ export class AdminUsersController {
   constructor(private readonly usersService: UsersService) {}
 
   @Post()
+  @Audit({ entityType: 'user', action: 'create' })
   @ApiOperation({
     summary: 'Create a new admin user',
     description:

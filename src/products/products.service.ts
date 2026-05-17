@@ -78,6 +78,11 @@ export class ProductsService {
     return categories.map((c) => this.toCategoryDto(c));
   }
 
+  async findCategoryById(id: string): Promise<CategoryDto | null> {
+    const category = await this.categoriesRepo.findOne({ where: { id } });
+    return category ? this.toCategoryDto(category) : null;
+  }
+
   async findBySlug(slug: string): Promise<ProductDto> {
     const product = await this.productsRepo.findOne({
       where: { slug },

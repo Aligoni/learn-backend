@@ -17,6 +17,7 @@ import {
   ApiResponse,
   ApiTags,
 } from '@nestjs/swagger';
+import { Audit } from '../admin/audit.decorator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { Roles } from '../auth/roles.decorator';
 import { RolesGuard } from '../auth/roles.guard';
@@ -34,6 +35,7 @@ export class AdminCategoriesController {
   constructor(private readonly productsService: ProductsService) {}
 
   @Post()
+  @Audit({ entityType: 'category', action: 'create' })
   @ApiOperation({
     summary: 'Create a category',
     description:
@@ -49,6 +51,7 @@ export class AdminCategoriesController {
   }
 
   @Patch(':id')
+  @Audit({ entityType: 'category', action: 'update' })
   @ApiOperation({ summary: 'Update a category' })
   @ApiParam({ name: 'id', format: 'uuid' })
   @ApiResponse({ status: 200, type: CategoryDto })
@@ -63,6 +66,7 @@ export class AdminCategoriesController {
 
   @Delete(':id')
   @HttpCode(HttpStatus.NO_CONTENT)
+  @Audit({ entityType: 'category', action: 'delete' })
   @ApiOperation({
     summary: 'Delete a category (hard delete)',
     description:
