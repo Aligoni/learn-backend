@@ -15,7 +15,8 @@ export type AuditEntityType =
   | 'category'
   | 'product'
   | 'stock_movement'
-  | 'order';
+  | 'order'
+  | 'setting';
 
 export const AUDIT_ENTITY_TYPES: AuditEntityType[] = [
   'user',
@@ -23,6 +24,7 @@ export const AUDIT_ENTITY_TYPES: AuditEntityType[] = [
   'product',
   'stock_movement',
   'order',
+  'setting',
 ];
 
 @Entity('audit_logs')
