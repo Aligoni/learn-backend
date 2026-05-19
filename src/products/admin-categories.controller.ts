@@ -39,7 +39,7 @@ export class AdminCategoriesController {
   @ApiOperation({
     summary: 'Create a category',
     description:
-      'Slug is auto-derived from `name` if omitted. Slug must be unique and match `^[a-z0-9]+(-[a-z0-9]+)*$`.',
+      'Slug is auto-derived from `name` if omitted. Slug must be unique and contain only lowercase letters, digits, and single hyphens (no leading or trailing hyphen).',
   })
   @ApiResponse({ status: 201, type: CategoryDto })
   @ApiResponse({ status: 400, description: 'Validation failed.' })
