@@ -4,7 +4,7 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectDataSource, InjectRepository } from '@nestjs/typeorm';
-import { DataSource, Repository } from 'typeorm';
+import { DataSource, EntityManager, Repository } from 'typeorm';
 import { ListStockMovementsQueryDto } from './dto/list-stock-movements.query.dto';
 import { PaginatedStockMovementsDto } from './dto/paginated-stock-movements.dto';
 import { StockMovementDto } from './dto/stock-movement.dto';
@@ -88,47 +88,78 @@ export class StockService {
     };
   }
 
-  async applyMovement(input: ApplyMovementInput): Promise<ApplyMovementResult> {
+  /**
+   * Apply a stock movement. When `manager` is supplied the work joins the
+   * caller's transaction (so checkout's order-save and stock-decrement commit
+   * or roll back together); otherwise it runs in its own transaction.
+   */
+  async applyMovement(
+    input: ApplyMovementInput,
+    manager?: EntityManager,
+  ): Promise<ApplyMovementResult> {
     if (!Number.isInteger(input.delta) || input.delta === 0) {
       throw new BadRequestException(
         'Stock delta must be a non-zero integer (positive to add, negative to remove).',
       );
     }
 
-    return this.dataSource.transaction(async (manager) => {
-      const product = await manager.findOne(Product, {
-        where: { id: input.productId },
-        withDeleted: true,
-      });
-      if (!product) {
-        throw new NotFoundException(`No product with id ${input.productId}.`);
-      }
-      if (product.deletedAt) {
-        throw new BadRequestException(
-          'Cannot adjust stock for a deleted product.',
-        );
-      }
+    if (manager) {
+      return this.applyMovementWithin(manager, input);
+    }
+    return this.dataSource.transaction((m) =>
+      this.applyMovementWithin(m, input),
+    );
+  }
 
-      const next = product.stock + input.delta;
-      if (next < 0) {
-        throw new BadRequestException(
-          `Stock cannot go negative. Current=${product.stock}, delta=${input.delta}.`,
-        );
-      }
+  private async applyMovementWithin(
+    manager: EntityManager,
+    input: ApplyMovementInput,
+  ): Promise<ApplyMovementResult> {
+    // Lock the product row so concurrent decrements can't both read the same
+    // stock and oversell. SQLite has no row locks (and serializes writers), so
+    // skip the clause there to avoid a driver error.
+    const supportsRowLock =
+      manager.connection.options.type !== 'sqlite' &&
+      manager.connection.options.type !== 'better-sqlite3';
 
-      product.stock = next;
-      await manager.save(Product, product);
-
-      const movement = manager.create(StockMovement, {
-        productId: product.id,
-        delta: input.delta,
-        reason: input.reason,
-        actorUserId: input.actorUserId ?? null,
-        note: input.note?.trim() || null,
-      });
-      const saved = await manager.save(StockMovement, movement);
-
-      return { movement: saved, newStock: next };
+    const product = await manager.findOne(Product, {
+      where: { id: input.productId },
+      withDeleted: true,
+      ...(supportsRowLock
+        ? { lock: { mode: 'pessimistic_write' as const } }
+        : {}),
     });
+    if (!product) {
+      throw new NotFoundException(`No product with id ${input.productId}.`);
+    }
+    // Returning stock to a discontinued product is a valid no-op side effect of
+    // cancelling/refunding an order, so only *manual* adjustments are blocked.
+    const isAutomaticReturn = input.reason === 'return';
+    if (product.deletedAt && !isAutomaticReturn) {
+      throw new BadRequestException(
+        'Cannot adjust stock for a deleted product.',
+      );
+    }
+
+    const next = product.stock + input.delta;
+    if (next < 0) {
+      throw new BadRequestException(
+        `Stock cannot go negative. Current=${product.stock}, delta=${input.delta}.`,
+      );
+    }
+
+    product.stock = next;
+    await manager.save(Product, product);
+
+    const movement = manager.create(StockMovement, {
+      productId: product.id,
+      delta: input.delta,
+      reason: input.reason,
+      actorUserId: input.actorUserId ?? null,
+      note: input.note?.trim() || null,
+    });
+    const saved = await manager.save(StockMovement, movement);
+
+    return { movement: saved, newStock: next };
   }
 }

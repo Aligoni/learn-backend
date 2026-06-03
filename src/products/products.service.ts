@@ -4,7 +4,8 @@ import {
   NotFoundException,
 } from '@nestjs/common';
 import { InjectRepository } from '@nestjs/typeorm';
-import { Repository } from 'typeorm';
+import { DataSource, Repository } from 'typeorm';
+import { CartItem } from '../cart/entities/cart-item.entity';
 import { slugify, SLUG_PATTERN } from '../common/slugify';
 import { CreateCategoryDto } from './dto/create-category.dto';
 import { CreateProductDto } from './dto/create-product.dto';
@@ -38,6 +39,7 @@ export class ProductsService {
     @InjectRepository(Category)
     private readonly categoriesRepo: Repository<Category>,
     private readonly stockService: StockService,
+    private readonly dataSource: DataSource,
   ) {}
 
   toCategoryDto(category: Category): CategoryDto {
@@ -364,7 +366,14 @@ export class ProductsService {
     if (product.deletedAt) {
       throw new ConflictException(`Product ${id} is already deleted.`);
     }
-    await this.productsRepo.softDelete(id);
+    // Soft-delete the product and prune it from any active carts in one
+    // transaction. Carts are not historical records, so a discontinued
+    // product must not linger as an orphaned line. Orders are left untouched —
+    // they snapshot the product and are meant to survive deletion.
+    await this.dataSource.transaction(async (manager) => {
+      await manager.softDelete(Product, id);
+      await manager.delete(CartItem, { productId: id });
+    });
     return this.getByIdForAdmin(id);
   }
 

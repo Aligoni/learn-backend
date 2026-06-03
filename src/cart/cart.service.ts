@@ -104,10 +104,19 @@ export class CartService {
     }
     const item = await this.itemsRepo.findOne({
       where: { id: itemId, cartId: cart.id },
+      withDeleted: true,
       relations: ['product'],
     });
     if (!item) {
       throw new NotFoundException(`Cart item "${itemId}" not found.`);
+    }
+    if (!this.isLiveItem(item)) {
+      // Product was removed from the catalogue while in the cart — prune the
+      // orphaned line and report it as gone rather than crashing on null.
+      await this.itemsRepo.delete(item.id);
+      throw new NotFoundException(
+        `Cart item "${itemId}" is no longer available.`,
+      );
     }
     this.assertWithinStock(dto.quantity, item.product);
     item.quantity = dto.quantity;
@@ -247,6 +256,10 @@ export class CartService {
   private async loadCartById(cartId: string): Promise<Cart> {
     const cart = await this.cartsRepo.findOne({
       where: { id: cartId },
+      // withDeleted so a soft-deleted product still hydrates `item.product`
+      // (instead of coming back null and crashing the DTO mappers). Such
+      // orphaned lines are pruned in toCartDto.
+      withDeleted: true,
       relations: ['items', 'items.product', 'items.product.category'],
       order: { items: { createdAt: 'ASC' } },
     });
@@ -254,6 +267,11 @@ export class CartService {
       throw new NotFoundException(`Cart "${cartId}" not found.`);
     }
     return cart;
+  }
+
+  /** A cart line is renderable only if its product still exists and is live. */
+  private isLiveItem(item: CartItem): boolean {
+    return item.product != null && item.product.deletedAt == null;
   }
 
   private assertWithinStock(quantity: number, product: Product): void {
@@ -295,7 +313,20 @@ export class CartService {
   }
 
   private toCartDto(cart: Cart): CartDto {
-    const items = (cart.items ?? []).map((i) => this.toCartItemDto(i));
+    const rawItems = cart.items ?? [];
+    const liveItems = rawItems.filter((i) => this.isLiveItem(i));
+
+    // Self-heal: a product that was (soft-)deleted while sitting in the cart
+    // leaves an orphaned line. Drop it from the response and prune the row so
+    // it does not resurface. Fire-and-forget — rendering must not block on it.
+    const orphanedIds = rawItems
+      .filter((i) => !this.isLiveItem(i))
+      .map((i) => i.id);
+    if (orphanedIds.length > 0) {
+      void this.itemsRepo.delete(orphanedIds).catch(() => undefined);
+    }
+
+    const items = liveItems.map((i) => this.toCartItemDto(i));
     const subtotal = roundMoney(items.reduce((sum, i) => sum + i.lineTotal, 0));
     const totalItems = items.reduce((sum, i) => sum + i.quantity, 0);
     const currency = items[0]?.product.currency ?? null;

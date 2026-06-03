@@ -105,16 +105,22 @@ export class OrdersService {
     const order = await this.dataSource.transaction(async (manager) => {
       const cart = await this.loadActiveCartForCheckout(manager, userId);
 
+      for (const item of cart.items) {
+        // Guard product existence/availability before any dereference. A
+        // soft-deleted product hydrates with deletedAt set; a hard-deleted one
+        // (should never happen — RESTRICT) would null the relation.
+        if (!item.product || item.product.deletedAt) {
+          throw new BadRequestException(
+            `A product in your cart is no longer available. Remove it and try again.`,
+          );
+        }
+      }
+
       const currency = cart.items[0].product.currency;
       for (const item of cart.items) {
         if (item.product.currency !== currency) {
           throw new BadRequestException(
             `Cart mixes currencies (${currency} vs ${item.product.currency}). Checkout requires a single currency.`,
-          );
-        }
-        if (item.product.deletedAt) {
-          throw new BadRequestException(
-            `Product "${item.product.name}" is no longer available.`,
           );
         }
         if (item.quantity > item.product.stock) {
@@ -155,13 +161,16 @@ export class OrdersService {
       const savedOrder = await manager.save(Order, orderEntity);
 
       for (const item of cart.items) {
-        await this.stockService.applyMovement({
-          productId: item.product.id,
-          delta: -item.quantity,
-          reason: 'sale',
-          actorUserId: userId,
-          note: `order:${savedOrder.id}`,
-        });
+        await this.stockService.applyMovement(
+          {
+            productId: item.product.id,
+            delta: -item.quantity,
+            reason: 'sale',
+            actorUserId: userId,
+            note: `order:${savedOrder.id}`,
+          },
+          manager,
+        );
       }
 
       await manager.delete(CartItem, { cartId: cart.id });
@@ -240,20 +249,26 @@ export class OrdersService {
       );
     }
 
-    if (STATUSES_THAT_RELEASE_STOCK.includes(target)) {
-      for (const item of order.items) {
-        await this.stockService.applyMovement({
-          productId: item.productId,
-          delta: item.quantity,
-          reason: 'return',
-          actorUserId,
-          note: `order:${order.id} status→${target}`,
-        });
+    // Release stock and persist the status change atomically so a mid-loop
+    // failure can't leave stock returned while the order keeps its old status.
+    await this.dataSource.transaction(async (manager) => {
+      if (STATUSES_THAT_RELEASE_STOCK.includes(target)) {
+        for (const item of order.items) {
+          await this.stockService.applyMovement(
+            {
+              productId: item.productId,
+              delta: item.quantity,
+              reason: 'return',
+              actorUserId,
+              note: `order:${order.id} status→${target}`,
+            },
+            manager,
+          );
+        }
       }
-    }
-
-    order.status = target;
-    await this.ordersRepo.save(order);
+      order.status = target;
+      await manager.save(Order, order);
+    });
     return this.getByIdForAdmin(orderId);
   }
 
@@ -265,6 +280,9 @@ export class OrdersService {
   ): Promise<Cart & { items: (CartItem & { product: Product })[] }> {
     const cart = await manager.findOne(Cart, {
       where: { userId },
+      // withDeleted so a soft-deleted product hydrates instead of nulling
+      // item.product; the deletedAt guard in checkout then reports it cleanly.
+      withDeleted: true,
       relations: ['items', 'items.product'],
       order: { items: { createdAt: 'ASC' } },
     });
