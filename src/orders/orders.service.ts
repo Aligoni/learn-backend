@@ -38,6 +38,14 @@ const VALID_TRANSITIONS: Record<OrderStatus, OrderStatus[]> = {
 
 const STATUSES_THAT_RELEASE_STOCK: OrderStatus[] = ['cancelled', 'refunded'];
 
+/**
+ * Thrown out of the checkout transaction when the idempotency-key insert hits
+ * the unique constraint — i.e. a concurrent request with the same key already
+ * committed the order. Signals the caller to roll this attempt back and return
+ * the winner's order instead of surfacing an error.
+ */
+class IdempotencyReplay extends Error {}
+
 function roundMoney(value: number): number {
   return Math.round(value * 100) / 100;
 }
@@ -102,95 +110,110 @@ export class OrdersService {
       return this.loadOrderForUser(replay.orderId, userId);
     }
 
-    const order = await this.dataSource.transaction(async (manager) => {
-      const cart = await this.loadActiveCartForCheckout(manager, userId);
+    let order: Order;
+    try {
+      order = await this.dataSource.transaction(async (manager) => {
+        const cart = await this.loadActiveCartForCheckout(manager, userId);
 
-      for (const item of cart.items) {
-        // Guard product existence/availability before any dereference. A
-        // soft-deleted product hydrates with deletedAt set; a hard-deleted one
-        // (should never happen — RESTRICT) would null the relation.
-        if (!item.product || item.product.deletedAt) {
-          throw new BadRequestException(
-            `A product in your cart is no longer available. Remove it and try again.`,
+        for (const item of cart.items) {
+          // Guard product existence/availability before any dereference. A
+          // soft-deleted product hydrates with deletedAt set; a hard-deleted
+          // one (should never happen — RESTRICT) would null the relation.
+          if (!item.product || item.product.deletedAt) {
+            throw new BadRequestException(
+              `A product in your cart is no longer available. Remove it and try again.`,
+            );
+          }
+        }
+
+        const currency = cart.items[0].product.currency;
+        for (const item of cart.items) {
+          if (item.product.currency !== currency) {
+            throw new BadRequestException(
+              `Cart mixes currencies (${currency} vs ${item.product.currency}). Checkout requires a single currency.`,
+            );
+          }
+          if (item.quantity > item.product.stock) {
+            throw new BadRequestException(
+              `Insufficient stock for "${item.product.name}": requested ${item.quantity}, available ${item.product.stock}.`,
+            );
+          }
+        }
+
+        const shippingFeeCents =
+          await this.settingsService.getShippingFeeCents();
+        const shippingFee = roundMoney(shippingFeeCents / 100);
+        const subtotal = roundMoney(
+          cart.items.reduce((sum, i) => sum + i.product.price * i.quantity, 0),
+        );
+        const total = roundMoney(subtotal + shippingFee);
+
+        const orderEntity = manager.create(Order, {
+          userId,
+          status: 'pending',
+          currency,
+          subtotal,
+          shippingFee,
+          total,
+          notes: dto.notes?.trim() || null,
+          items: cart.items.map((i) =>
+            manager.create(OrderItem, {
+              productId: i.product.id,
+              quantity: i.quantity,
+              unitPrice: i.product.price,
+              lineTotal: roundMoney(i.product.price * i.quantity),
+              currency: i.product.currency,
+              productName: i.product.name,
+              productSlug: i.product.slug,
+              productImageUrl: i.product.imageUrl,
+            }),
+          ),
+        });
+        const savedOrder = await manager.save(Order, orderEntity);
+
+        for (const item of cart.items) {
+          await this.stockService.applyMovement(
+            {
+              productId: item.product.id,
+              delta: -item.quantity,
+              reason: 'sale',
+              actorUserId: userId,
+              note: `order:${savedOrder.id}`,
+            },
+            manager,
           );
         }
-      }
 
-      const currency = cart.items[0].product.currency;
-      for (const item of cart.items) {
-        if (item.product.currency !== currency) {
-          throw new BadRequestException(
-            `Cart mixes currencies (${currency} vs ${item.product.currency}). Checkout requires a single currency.`,
+        await manager.delete(CartItem, { cartId: cart.id });
+
+        try {
+          await manager.save(
+            manager.create(IdempotencyKey, {
+              key: idempotencyKey,
+              userId,
+              orderId: savedOrder.id,
+            }),
           );
+        } catch {
+          // Unique-constraint violation on (userId, key): a concurrent request
+          // already committed the order for this key. Roll this attempt back
+          // and signal the caller to return the winner's order.
+          throw new IdempotencyReplay();
         }
-        if (item.quantity > item.product.stock) {
-          throw new BadRequestException(
-            `Insufficient stock for "${item.product.name}": requested ${item.quantity}, available ${item.product.stock}.`,
-          );
-        }
-      }
 
-      const shippingFeeCents = await this.settingsService.getShippingFeeCents();
-      const shippingFee = roundMoney(shippingFeeCents / 100);
-      const subtotal = roundMoney(
-        cart.items.reduce((sum, i) => sum + i.product.price * i.quantity, 0),
-      );
-      const total = roundMoney(subtotal + shippingFee);
-
-      const orderEntity = manager.create(Order, {
-        userId,
-        status: 'pending',
-        currency,
-        subtotal,
-        shippingFee,
-        total,
-        notes: dto.notes?.trim() || null,
-        items: cart.items.map((i) =>
-          manager.create(OrderItem, {
-            productId: i.product.id,
-            quantity: i.quantity,
-            unitPrice: i.product.price,
-            lineTotal: roundMoney(i.product.price * i.quantity),
-            currency: i.product.currency,
-            productName: i.product.name,
-            productSlug: i.product.slug,
-            productImageUrl: i.product.imageUrl,
-          }),
-        ),
+        return savedOrder;
       });
-      const savedOrder = await manager.save(Order, orderEntity);
-
-      for (const item of cart.items) {
-        await this.stockService.applyMovement(
-          {
-            productId: item.product.id,
-            delta: -item.quantity,
-            reason: 'sale',
-            actorUserId: userId,
-            note: `order:${savedOrder.id}`,
-          },
-          manager,
-        );
+    } catch (err) {
+      if (err instanceof IdempotencyReplay) {
+        const winner = await this.idempotencyRepo.findOne({
+          where: { userId, key: idempotencyKey },
+        });
+        if (winner) {
+          return this.loadOrderForUser(winner.orderId, userId);
+        }
       }
-
-      await manager.delete(CartItem, { cartId: cart.id });
-
-      try {
-        await manager.save(
-          manager.create(IdempotencyKey, {
-            key: idempotencyKey,
-            userId,
-            orderId: savedOrder.id,
-          }),
-        );
-      } catch {
-        throw new ConflictException(
-          'A concurrent checkout with the same Idempotency-Key is in progress. Retry shortly.',
-        );
-      }
-
-      return savedOrder;
-    });
+      throw err;
+    }
 
     return this.loadOrderForUser(order.id, userId);
   }

@@ -136,9 +136,10 @@ describe('OrdersService — soft-delete & transaction behaviour', () => {
   }
 
   async function addToCart(product: Product, quantity: number): Promise<void> {
-    const cart = await carts.save(
-      carts.create({ userId: user.id, sessionId: null }),
-    );
+    // A user has at most one cart (unique user_id), so reuse the existing one.
+    const cart =
+      (await carts.findOne({ where: { userId: user.id } })) ??
+      (await carts.save(carts.create({ userId: user.id, sessionId: null })));
     await items.save(
       items.create({ cartId: cart.id, productId: product.id, quantity }),
     );
@@ -210,5 +211,44 @@ describe('OrdersService — soft-delete & transaction behaviour', () => {
         reason: 'adjustment',
       }),
     ).rejects.toThrow(/deleted product/i);
+  });
+
+  it('replays the same order for a repeated idempotency key (pre-flight path)', async () => {
+    const product = await makeProduct({ stock: 5 });
+    await addToCart(product, 2);
+    const first = await orders.checkout(user.id, 'idem-replay', {});
+
+    // Same key again — cart is now empty, but the pre-flight replay short-circuit
+    // returns the original order rather than erroring on the empty cart.
+    const second = await orders.checkout(user.id, 'idem-replay', {});
+    expect(second.id).toBe(first.id);
+
+    // Exactly one order and one stock decrement happened.
+    expect(await dataSource.getRepository(Order).count()).toBe(1);
+    expect((await products.findOneByOrFail({ id: product.id })).stock).toBe(3);
+  });
+
+  it('returns the winner order (not a 409) when the idempotency insert races', async () => {
+    // Winner: a committed order + idempotency row for key K.
+    const productA = await makeProduct({ stock: 5 });
+    await addToCart(productA, 1);
+    const winner = await orders.checkout(user.id, 'idem-race', {});
+
+    // Loser: a fresh cart, same key. Force the pre-flight check to MISS so we
+    // exercise the in-transaction collision path (the real concurrency window).
+    const productB = await makeProduct({ stock: 5 });
+    await addToCart(productB, 1);
+    const findOneSpy = jest
+      .spyOn(dataSource.getRepository(IdempotencyKey), 'findOne')
+      .mockResolvedValueOnce(null); // pre-flight miss only; later lookup is real
+
+    const result = await orders.checkout(user.id, 'idem-race', {});
+
+    // Got the winner's order back, no duplicate created, loser's stock untouched.
+    expect(result.id).toBe(winner.id);
+    expect(await dataSource.getRepository(Order).count()).toBe(1);
+    expect((await products.findOneByOrFail({ id: productB.id })).stock).toBe(5);
+
+    findOneSpy.mockRestore();
   });
 });
